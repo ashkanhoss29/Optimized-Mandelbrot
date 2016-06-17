@@ -4,7 +4,7 @@ An Optimized (simple) Mandelbrot Renderer
 This is a simple Mandelbrot renderer that I wrote a couple of years ago that I have infrequently and slowly optimized using SIMD, assembly, and multi-threading techniques since I originally wrote it. The emphasis for this project was to learn optimization and little effort has been put in other areas.
 
 How to use:
-* Grab the files by clicking "Clone or download"->"Download Zip"
+* Grab the files by clicking "Clone or download"->"Download Zip" and unzip
 * Run main.exe that is found in the build folder
 * Use arrow keys to move around; + and - keys to zoom in and out. 
 
