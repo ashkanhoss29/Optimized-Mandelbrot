@@ -20,7 +20,7 @@ Post-optimization: 3 milliseconds
 
 
 Resources:
-MSDN
-Intel Intrinsics Guide
-Handmade Hero
-https://software.intel.com/en-us/articles/introduction-to-x64-assembly
+![MSDN](https://msdn.microsoft.com/en-us)
+![Intel Intrinsics Guide](https://software.intel.com/sites/landingpage/IntrinsicsGuide/)
+![Handmade Hero](https://www.youtube.com/channel/UCaTznQhurW5AaiYPbhEA-KA)
+![Introduction to x64 Assembly](https://software.intel.com/en-us/articles/introduction-to-x64-assembly)
