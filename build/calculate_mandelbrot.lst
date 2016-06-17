@@ -1,0 +1,130 @@
+Microsoft (R) Macro Assembler (x64) Version 14.00.23026.0   06/17/16 16:54:10
+..\code\calculate_mandelbrot.asm			     Page 1 - 1
+
+
+ 00000000			.data
+ 00000000			realVal REAL8 +1024.0 ; (1 << 16)
+	   4090000000000000
+ 00000008			two REAL8 +2.0
+	   4000000000000000
+
+ 00000000			.code
+				PUBLIC mandelbrot_iteration
+ 00000000			mandelbrot_iteration PROC
+					;RCX    	YMM0	x_scaled_zero_x4 
+					;RDX    	YMM1	y_scaled_zero_x4
+
+					; TODO(Ashkan): Localize
+					;R8     	YMM2	n_x4
+					;R9     	YMM3	m_x4
+					;RSP+28H	YMM4	iteration_x4
+					;RSP+30H	YMM5	result_iteration_x4
+					;RSP+38H	YMM6	negative_one_x4
+					;RSP+40H	YMM7	one_x4
+					;RSP+48H	YMM8	two_x4
+					;RSP+50H	YMM9	s1024_x4
+
+ 00000000  C5 FD 10 01			VMOVUPD	YMM0, YMMWORD PTR [RCX]
+ 00000004  C5 FD 10 0A			VMOVUPD	YMM1, YMMWORD PTR [RDX]
+ 00000008  C4 C1 7D 10 10		VMOVUPD	YMM2, YMMWORD PTR [R8]
+ 0000000D  C4 C1 7D 10 19		VMOVUPD	YMM3, YMMWORD PTR [R9]
+
+ 00000012  48/ 8B 44 24			MOV	RAX, QWORD PTR [RSP+28H]
+	   28
+ 00000017  C5 FD 10 20			VMOVUPD	YMM4, YMMWORD PTR [RAX]
+ 0000001B  48/ 8B 44 24			MOV	RAX, QWORD PTR [RSP+30H]
+	   30
+ 00000020  C5 FD 10 28			VMOVUPD	YMM5, YMMWORD PTR [RAX]
+ 00000024  48/ 8B 44 24			MOV	RAX, QWORD PTR [RSP+38H]
+	   38
+ 00000029  C5 FD 10 30			VMOVUPD	YMM6, YMMWORD PTR [RAX]
+ 0000002D  48/ 8B 44 24			MOV	RAX, QWORD PTR [RSP+40H]
+	   40
+ 00000032  C5 FD 10 38			VMOVUPD	YMM7, YMMWORD PTR [RAX]
+ 00000036  48/ 8B 44 24			MOV	RAX, QWORD PTR [RSP+48H]
+	   48
+ 0000003B  C5 7D 10 00			VMOVUPD	YMM8, YMMWORD PTR [RAX]
+ 0000003F  48/ 8B 44 24			MOV	RAX, QWORD PTR [RSP+50H]
+	   50
+ 00000044  C5 7D 10 08			VMOVUPD	YMM9, YMMWORD PTR [RAX]
+
+ 00000048  48/ 33 C0			XOR	RAX, RAX
+
+ 0000004B				Label0:
+
+					; iteration++
+ 0000004B  C5 DD 58 E7			VADDPD	YMM4, YMM4, YMM7
+					; if(++iteration >= 500) finish
+ 0000004F  FF C0			INC		EAX ; ++iteration
+ 00000051  3D 000001F4			CMP		EAX, 500 ; iteration >= 500 ?
+ 00000056  7D 59			JGE		Label1 ; jumps if the flag SF == 0
+
+					; ntemp = n*n - m*m + x0
+ 00000058  C5 6D 59 D2			VMULPD	YMM10, YMM2, YMM2
+ 0000005C  C5 65 59 DB			VMULPD	YMM11, YMM3, YMM3
+ 00000060  C4 41 2D 5C D3		VSUBPD	YMM10, YMM10, YMM11
+ 00000065  C5 2D 031CD058		VADDPD	YMM10, YMM10, YMM0
+
+					; m = 2*n*m + y0
+ 00000069  C5 3D 031CDA59		VMULPD	YMM11, YMM8, YMM2
+ 0000006D  C4 C1 65: 59 DB		VMULPD	YMM3, YMM3, YMM11
+ 00000072  C5 E5 58 D9			VADDPD	YMM3, YMM3, YMM1
+
+					; n = tempn
+ 00000076  C4 C1 7D 10 D2		VMOVUPD	YMM2, YMM10
+
+					; mask = n*n + m*m < 1024 && !(result_iteration == -1)
+ 0000007B  C5 6D 59 D2			VMULPD	YMM10, YMM2, YMM2
+ 0000007F  C5 65 59 DB			VMULPD	YMM11, YMM3, YMM3
+ 00000083  C4 41 2D 58 D3		VADDPD	YMM10, YMM10, YMM11
+ 00000088  C4 41 2D C2			VCMPLT_OQPD	YMM10, YMM10, YMM9
+	   11D1
+ 0000008E  C5 55 C2 DE 00		VCMPEQPD	YMM11, YMM5, YMM6
+ 00000093  C4 41 2D 55 D3		VANDNPD	YMM10, YMM10, YMM11
+
+					; result_iteration = mask ? iteration : result_iteration
+ 00000098  C4 E3 55 4B/ EC		VBLENDVPD	YMM5, YMM5, YMM4, YMM10
+	   A0
+
+					; if (result_iteration == -1) loop; else finish;
+ 0000009E  C5 55 C2 D6 00		VCMPEQPD	YMM10, YMM5, YMM6 ; check == -1 for each value; we get 0 if false
+ 000000A3  C4 41 25 57 DB		VXORPD	YMM11, YMM11, YMM11 ; get 0 since we need to check against 0 with vtestpd
+ 000000A8  C4 42 7D 0F DA		VTESTPD	YMM11, YMM10 ; sets CF flag to 1 if all four values are 0 (none are == -1)
+ 000000AD  72 02			JB	Label1 ; jump if CF == 1
+
+ 000000AF  EB 9A			JMP Label0
+
+ 000000B1				Label1:
+
+					; result_iteration = result_iteration == -1 ? iteration : result_iteration
+ 000000B1  C5 55 C2 D6 00		VCMPEQPD	YMM10, YMM5, YMM6
+ 000000B6  C4 E3 55 4B/ C4		VBLENDVPD	YMM0, YMM5, YMM4,YMM10
+	   A0
+
+ 000000BC  C3				RET
+ 000000BD			mandelbrot_iteration ENDP
+				END
+Microsoft (R) Macro Assembler (x64) Version 14.00.23026.0   06/17/16 16:54:10
+..\code\calculate_mandelbrot.asm			     Symbols 2 - 1
+
+
+
+
+Procedures, parameters, and locals:
+
+                N a m e                 Type     Value    Attr
+
+mandelbrot_iteration . . . . . .	P 	 00000000 _TEXT	Length= 000000BD Public
+  Label0 . . . . . . . . . . . .	L 	 0000004B _TEXT	
+  Label1 . . . . . . . . . . . .	L 	 000000B1 _TEXT	
+
+
+Symbols:
+
+                N a m e                 Type     Value    Attr
+
+realVal  . . . . . . . . . . . .	QWord	 00000000 _DATA	
+two  . . . . . . . . . . . . . .	QWord	 00000008 _DATA	
+
+	   0 Warnings
+	   0 Errors
