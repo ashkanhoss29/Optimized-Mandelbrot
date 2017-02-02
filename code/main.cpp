@@ -28,24 +28,32 @@ struct win32_offscreen_buffer
 	int Pitch;
 };
 
-global_variable bool Running;
-global_variable win32_offscreen_buffer GlobalBackBuffer;
-
 struct win32_window_dimension
 {
 	int Width;
 	int Height;
 };
 
-struct yInfo
+struct WorkerThreadInfo
 {
-	int64_t start;
-	int64_t end;
+	int count;
 };
 
-double scale = 1.0;
-double x_pos = 0.0;
-double y_pos = 0.0;
+const int BufferWidth = 1200;
+const int BufferHeight = 800;
+const int numberOfThreads = 12;
+
+global_variable int queue_item = 0;
+global_variable double scale = 1.0;
+global_variable double x_pos = 0.0;
+global_variable double y_pos = 0.0;
+global_variable bool Running;
+global_variable win32_offscreen_buffer GlobalBackBuffer;
+global_variable HWND Window;
+global_variable HANDLE KeyEvent;
+global_variable HANDLE MainEvents[numberOfThreads];
+global_variable HANDLE WorkerDoneEvents[numberOfThreads];
+global_variable HANDLE Mutex;
 
 internal win32_window_dimension
 Win32GetWindowDimension(HWND Window)
@@ -93,9 +101,6 @@ extern "C"
 __m256d mandelbrot_iteration(
 		__m256d x_scaled_zero_x4,
 		__m256d y_scaled_zero_x4,
-		__m256d n_x4,
-		__m256d m_x4,
-		__m256d iteration_x4,
 		__m256d result_iteration_x4,
 		__m256d negative_one_x4,
 		__m256d one_x4,
@@ -103,7 +108,7 @@ __m256d mandelbrot_iteration(
 		__m256d s1024_x4);
 
 internal void
-render(win32_offscreen_buffer *Buffer, int starty, int endy)
+render(win32_offscreen_buffer *Buffer, int Y)
 {
 	double x_max = 1.0 * scale + x_pos;
 	double x_min = -2.5 * scale + x_pos;
@@ -133,18 +138,14 @@ render(win32_offscreen_buffer *Buffer, int starty, int endy)
 	int64_t iterationCount = 0;
 
 	uint8 *Row = (uint8 *)Buffer->Memory;
-	Row = Row + (Buffer->Pitch * starty);
-	for(int Y = starty; 
-		Y < endy; 
-		++Y)
+	Row = Row + (Buffer->Pitch * Y);
+	//for(int Y = starty; 
+	//	Y < endy; 
+	//	++Y)
 	{
-		double y_scaled_zero = (Y * y_scaler) + y_min;  // scaled x (-2.5, 1)
-		double y_scaled_zero_array[4] = {y_scaled_zero, y_scaled_zero, y_scaled_zero, y_scaled_zero};
-		__m256d y_scaled_zero_x4 = _mm256_load_pd(y_scaled_zero_array);
-
-		__m256d n_x4 = _mm256_setzero_pd();
-		__m256d m_x4 = _mm256_setzero_pd();
-		__m256d zero_x4_1 = _mm256_setzero_pd();
+		double y_scaled = (Y * y_scaler) + y_min;  // scaled x (-2.5, 1)
+		double y_scaled_array[4] = {y_scaled, y_scaled, y_scaled, y_scaled};
+		__m256d y_scaled_x4 = _mm256_load_pd(y_scaled_array);
 
 		__m256d four_x4 = _mm256_set1_pd(4);
 		__m256d X_x4 = _mm256_set_pd(3,2,1,0);
@@ -158,24 +159,16 @@ render(win32_offscreen_buffer *Buffer, int starty, int endy)
 			X_x4 = _mm256_add_pd(X_x4, four_x4);
 			__m256d x_scaled_zero_x4 = _mm256_add_pd(_mm256_mul_pd(X_x4, x_scaler_x4), x_min_x4);
 
-			n_x4 = zero_x4_1;
-			m_x4 = zero_x4_1;
-			__m256d iteration_x4 = _mm256_setzero_pd();
 			__m256d result_iteration_x4 = _mm256_load_pd(negative_1_array);
 
 			result_iteration_x4 = mandelbrot_iteration(
 					x_scaled_zero_x4,
-					y_scaled_zero_x4,
-					n_x4,
-					m_x4,
-					iteration_x4,
+					y_scaled_x4,
 					result_iteration_x4,
 					negative_one_x4,
 					one_x4,
 					two_x4,
 					s1024_x4);
-
-			//result_iteration_x4 = mandelbrot_iteration(x_scaled_zero_x4, y_scaled_zero_x4);
 
 			// (1 - d) * 255 : Inverse color and cast to 8 bit (for subpixel assignment)
 			__m256d color_x4 = _mm256_sub_pd(one_x4, _mm256_div_pd(result_iteration_x4, max_iteration_x4));
@@ -259,46 +252,63 @@ Win32MainWindowCallback(HWND   Window,
 			uint32 VKCode = WParam;
 			bool WasDown = ((LParam & 1 << 30) != 0);
 			bool IsDown = ((LParam & 1 << 31) == 0);
-
-			//if(WasDown == IsDown) // comment out for repeating input
-			//	break;
+			bool doRender = false;
 
 			switch(VKCode)
 			{
+				if(!IsDown) break;
+
 				case VK_UP:
 				{
 					if(IsDown)
+					{
 						y_pos = y_pos - (0.7 * scale);
+						SetEvent(KeyEvent);
+					}
 				} break;
 				case VK_DOWN:
 				{
 					if(IsDown)
+					{
 						y_pos = y_pos + (0.7 * scale);
+						SetEvent(KeyEvent);
+					}
 				} break;
 				case VK_LEFT:
 				{
 					if(IsDown)
+					{
 						x_pos = x_pos - (0.7 * scale);
+						SetEvent(KeyEvent);
+					}
 				} break;
 				case VK_RIGHT:
 				{
 					if(IsDown)
+					{
 						x_pos = x_pos + (0.7 * scale);
+						SetEvent(KeyEvent);
+					}
 				} break;
 				case VK_OEM_PLUS:
 				{
 					if(IsDown)
+					{
 						scale = scale / 2.0;
+						SetEvent(KeyEvent);
+					}
 				} break;
 				case VK_OEM_MINUS:
 				{
 					if(IsDown)
+					{
 						scale = scale * 2.0;
+						SetEvent(KeyEvent);
+					}
 				} break;
 				case VK_ESCAPE:
 				{
-					if(IsDown)
-						Running = false;
+					Running = false;
 				} break;
 			}
 		} break;
@@ -349,18 +359,98 @@ Win32MainWindowCallback(HWND   Window,
 	return(Result);
 }
 
-// TODO: Remove
-DWORD myThreadProc(LPVOID lpParameter)
+internal int
+PopQueue()
+{
+	WaitForSingleObject(Mutex, INFINITE);
+
+	// An item is one row (horizontal line of pixels) so popping one item means
+	// we just decrement the queue item by one and return the number of the
+	// current row that needs to be rendered.
+	int popped_item = -1;
+	if(queue_item != 0)
+	{
+		popped_item = --queue_item;
+	}
+
+	ReleaseMutex(Mutex);
+
+	return popped_item;
+}
+
+internal void
+FillQueue()
+{
+	WaitForSingleObject(Mutex, INFINITE);
+
+	// Filling the queue just consists of setting the queue_item to be the
+	// amount of rows (horizontal lines of pixels) that we have to render.
+	if(queue_item == 0)
+	{
+		queue_item = BufferHeight;
+	}
+
+	ReleaseMutex(Mutex);
+}
+
+DWORD
+WorkerThread(LPVOID lpParameter)
+{
+	WorkerThreadInfo* worker_info = (WorkerThreadInfo *)lpParameter;
+	WaitForSingleObject(MainEvents[worker_info->count], INFINITE);
+
+	for(;;)
+	{
+		int row = PopQueue();
+		if(row != -1)
+		{
+			render(&GlobalBackBuffer, row);
+		}
+		else
+		{
+			// All the work for the current frame is complete (or is being
+			// worked on by a different worker thread). Wait until we have
+			// more work (e.g. we start rendering the next frame)
+			SignalObjectAndWait(WorkerDoneEvents[worker_info->count],
+								MainEvents[worker_info->count],
+								INFINITE,
+								FALSE);
+		}
+	}
+}
+
+DWORD
+MainThread(LPVOID lpParameter)
 {
 	for(;;)
 	{
-		int64_t count = __rdtsc();
+		// Wait until we decide to draw the next frame
+		WaitForSingleObject(KeyEvent, INFINITE);
 
-		yInfo* y_info = (yInfo *)lpParameter;
-		render(&GlobalBackBuffer, y_info->start, y_info->end);
+		// Fill the worker queue
+		FillQueue();
 
-		count = __rdtsc() - count;
-		OutputDebugInt64(count);
+		// Start the worker threads
+		for(int i = 0; i < numberOfThreads; ++i)
+		{
+			PulseEvent(MainEvents[i]);
+		}
+
+		// Wait for all the worker threads (and work) to be complete
+		WaitForMultipleObjects(numberOfThreads, WorkerDoneEvents, TRUE, INFINITE);
+
+		// Reset the worker threads
+		for(int i = 0; i < numberOfThreads; ++i)
+		{
+			ResetEvent(WorkerDoneEvents[i]);
+		}
+
+		// Draw the results to the window buffer
+		HDC DeviceContext = GetDC(Window);
+		win32_window_dimension Dimension = Win32GetWindowDimension(Window);
+		Win32CopyBufferToWindow(&GlobalBackBuffer, DeviceContext, 
+								Dimension.Width, Dimension.Height);
+		ReleaseDC(Window, DeviceContext);
 	}
 }
 
@@ -372,23 +462,16 @@ WinMain(HINSTANCE Instance,
 {
 	WNDCLASS WindowClass = {};
 
-	int BufferWidth = 1200;
-	int BufferHeight = 800;
-
 	Win32ResizeDIBSection(&GlobalBackBuffer, BufferWidth, BufferHeight);
 
 	WindowClass.style = CS_HREDRAW|CS_VREDRAW;
 	WindowClass.lpfnWndProc = Win32MainWindowCallback;
 	WindowClass.hInstance = Instance;
-	//WindowClass.hIcon = ;
-	//WindowClass.hCursor = ;
-	//WindowClass.hbrBackground = ;
-	//WindowClass.lpszMenuName = 0;
 	WindowClass.lpszClassName = "MandelbrotWindowClass";
 
 	if(RegisterClass(&WindowClass))
 	{
-		HWND Window = CreateWindowEx(
+		Window = CreateWindowEx(
 			0,
 			WindowClass.lpszClassName,
 			"Mandelbrot",
@@ -404,19 +487,27 @@ WinMain(HINSTANCE Instance,
 
 		if(Window)
 		{
-			const int threadCount = 12;
-			int dHeight = BufferHeight / threadCount;
-			yInfo y_info[threadCount];
-			for(int i = 0; i < threadCount; ++i)
+			KeyEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+			Mutex = CreateMutex(NULL, FALSE, NULL);
+
+			for(int i = 0; i < numberOfThreads; ++i)
 			{
-				int start = i * dHeight;
-				int end = i == (threadCount - 1) ? BufferHeight : start + dHeight;
-				y_info[i].start = start;
-				y_info[i].end = end;
-				HANDLE myThread = CreateThread(0, 0, myThreadProc, &y_info[i], 0, 0);
-				CloseHandle(myThread);
-				//render(&GlobalBackBuffer, &y_info);
+				WorkerDoneEvents[i] = CreateEvent(NULL, FALSE, FALSE, NULL);
+				MainEvents[i] = CreateEvent(NULL, FALSE, FALSE, NULL);
 			}
+
+			int dHeight = BufferHeight / numberOfThreads;
+			WorkerThreadInfo worker_info[numberOfThreads];
+			for(int i = 0; i < numberOfThreads; ++i)
+			{
+				worker_info[i].count = i;
+				HANDLE myThread = CreateThread(0, 0, WorkerThread, &worker_info[i], 0, 0);
+				CloseHandle(WorkerThread);
+			}
+
+			HANDLE mainThread = CreateThread(0, 0, MainThread, NULL, 0, 0);
+			CloseHandle(mainThread);
+			SetEvent(KeyEvent);
 
 			Running = true;
 			while(Running)
@@ -439,22 +530,16 @@ WinMain(HINSTANCE Instance,
 				count = __rdtsc() - count;
 				OutputDebugInt64(count);
 #endif
-
-				HDC DeviceContext = GetDC(Window);
-				win32_window_dimension Dimension = Win32GetWindowDimension(Window);
-				Win32CopyBufferToWindow(&GlobalBackBuffer, DeviceContext, 
-										Dimension.Width, Dimension.Height);
-				ReleaseDC(Window, DeviceContext);
 			}
 		}
 		else
 		{
-			// TODO(Ashkan): Logging
+			OutputDebugStringA("ERROR: CreateWindow failed\n");
 		}
 	}
 	else
 	{
-		// TODO(Ashkan): Logging
+		OutputDebugStringA("ERROR: RegisterClass failed\n");
 	}
 
 	return(0);
